@@ -140,13 +140,12 @@
 
   <div id="configBanner" class="config-banner">
     <h2>⚡ Beam Analytics</h2>
-    <p>Connect your Notion workspace to load live sales data</p>
+    <p>Enter your n8n webhook URL to load live sales data securely</p>
     <div class="config-row">
-      <input class="config-input" id="notionToken" type="password" placeholder="Notion Integration Token (secret_xxx...)"/>
-      <input class="config-input" id="dbId" placeholder="Analytics DB ID: 4279dc10-e706-4209-b0d3-89122fbc5e5e" style="width:420px"/>
+      <input class="config-input" id="webhookUrl" placeholder="https://urstory.app.n8n.cloud/webhook/beam-analytics" style="width:500px"/>
     </div>
     <button class="config-btn" onclick="saveConfig()">Connect & Load Data</button>
-    <p class="config-note" style="margin-top:10px">Token stored in your browser only. Requires a <strong>read-only</strong> Notion integration connected to the Analytics DB.</p>
+    <p class="config-note" style="margin-top:10px">Your Notion token stays secure in n8n — never exposed in the browser.</p>
   </div>
 
   <div id="filterBar" class="filters" style="display:none">
@@ -201,22 +200,16 @@
 </main>
 
 <script>
-let NOTION_TOKEN = localStorage.getItem('beam_token') || '';
-let DB_ID = localStorage.getItem('beam_db_id') || '4279dc10-e706-4209-b0d3-89122fbc5e5e';
+let WEBHOOK_URL = localStorage.getItem('beam_webhook') || '';
 let allLogs = [], filteredLogs = [];
 
-// Pre-fill inputs if already saved
-if (NOTION_TOKEN) document.getElementById('notionToken').value = NOTION_TOKEN;
-if (DB_ID) document.getElementById('dbId').value = DB_ID;
+if (WEBHOOK_URL) document.getElementById('webhookUrl').value = WEBHOOK_URL;
 
 function saveConfig() {
-  const t = document.getElementById('notionToken').value.trim();
-  const d = document.getElementById('dbId').value.trim();
-  if (!t) { alert('Please enter your Notion Integration Token'); return; }
-  NOTION_TOKEN = t;
-  DB_ID = d || '4279dc10-e706-4209-b0d3-89122fbc5e5e';
-  localStorage.setItem('beam_token', NOTION_TOKEN);
-  localStorage.setItem('beam_db_id', DB_ID);
+  const w = document.getElementById('webhookUrl').value.trim();
+  if (!w) { alert('Please enter your n8n webhook URL'); return; }
+  WEBHOOK_URL = w;
+  localStorage.setItem('beam_webhook', WEBHOOK_URL);
   loadData();
 }
 
@@ -227,28 +220,15 @@ function normId(id) {
 }
 
 async function fetchAllPages() {
-  // Route through cors-anywhere proxy to bypass browser CORS restrictions
-  // on direct Notion API calls from GitHub Pages
-  const PROXY = 'https://corsproxy.io/?url=';
-  let results = [], cursor = undefined;
-  const headers = {
-    'Authorization': `Bearer ${NOTION_TOKEN}`,
-    'Notion-Version': '2022-06-28',
-    'Content-Type': 'application/json'
-  };
-  do {
-    const body = { page_size: 100 };
-    if (cursor) body.start_cursor = cursor;
-    const url = `${PROXY}${encodeURIComponent(`https://api.notion.com/v1/databases/${normId(DB_ID)}/query`)}`;
-    const r = await fetch(url, {
-      method: 'POST', headers, body: JSON.stringify(body)
-    });
-    if (!r.ok) { const e = await r.text(); throw new Error(e); }
-    const data = await r.json();
-    results = results.concat(data.results);
-    cursor = data.has_more ? data.next_cursor : undefined;
-  } while (cursor);
-  return results;
+  const r = await fetch(WEBHOOK_URL, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  if (!r.ok) { const e = await r.text(); throw new Error(`${r.status}: ${e}`); }
+  const data = await r.json();
+  // Expect array of log objects from n8n
+  if (!Array.isArray(data)) throw new Error('Expected array from webhook. Check n8n workflow output.');
+  return data;
 }
 
 function prop(page, name) {
@@ -285,19 +265,19 @@ function parseLogs(pages) {
 }
 
 async function loadData() {
-  if (!NOTION_TOKEN) return;
+  if (!WEBHOOK_URL) return;
   const btn = document.getElementById('refreshBtn');
   btn.classList.add('loading'); btn.textContent = '↻ Loading...';
-  document.getElementById('statsGrid').innerHTML = '<div class="loading-state" style="grid-column:1/-1"><div class="spinner"></div>Fetching from Notion...</div>';
+  document.getElementById('statsGrid').innerHTML = '<div class="loading-state" style="grid-column:1/-1"><div class="spinner"></div>Fetching from n8n...</div>';
   try {
-    const pages = await fetchAllPages();
-    allLogs = parseLogs(pages);
+    const rows = await fetchAllPages();
+    allLogs = rows; // already parsed objects from n8n
     document.getElementById('configBanner').style.display = 'none';
     document.getElementById('filterBar').style.display = 'flex';
     populateRepFilter();
     applyFilters();
   } catch(e) {
-    document.getElementById('statsGrid').innerHTML = `<div class="loading-state" style="grid-column:1/-1;color:var(--red)">❌ Error: ${e.message}<br><small style="color:var(--muted)">Check your token and DB ID</small></div>`;
+    document.getElementById('statsGrid').innerHTML = `<div class="loading-state" style="grid-column:1/-1;color:var(--red)">❌ Error: ${e.message}<br><small style="color:var(--muted)">Check your webhook URL and that the n8n workflow is active</small></div>`;
   }
   btn.classList.remove('loading'); btn.textContent = '↻ Refresh';
 }
@@ -469,7 +449,7 @@ function renderChart() {
   }</div>` : '<div class="empty">No data</div>';
 }
 
-if (NOTION_TOKEN) loadData();
+if (WEBHOOK_URL) loadData();
 </script>
 </body>
 </html>
