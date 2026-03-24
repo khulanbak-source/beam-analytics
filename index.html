@@ -1,0 +1,85 @@
+// ══════════════════════════════════════════════════════════
+// BEAM ANALYTICS LOGGER
+// Place this Code node AFTER:
+//   - "Extract page ID"  (for save_draft path)
+//   - "Code in JavaScript" (for update_draft path)
+// Connect both paths into this single node.
+// Then connect output → your existing success/reminder nodes.
+// ══════════════════════════════════════════════════════════
+
+const ANALYTICS_DB_ID = '4279dc10-e706-4209-b0d3-89122fbc5e5e';
+const NOTION_API = 'https://api.notion.com/v1/pages';
+const NOTION_VERSION = '2022-06-28';
+
+// ── Pull data from whichever upstream path fired ──────────
+const d = $input.first().json;
+
+// Detect path: save_draft vs update_draft
+const isUpdate = !!d.page_id && !d.notion_page_id;
+const actionType = isUpdate ? 'Update' : 'New Lead';
+
+// Fields auto-extracted vs manually asked
+// Beam asks for fields in ONE message. Count non-empty required fields.
+const requiredFields = ['first_name','last_name','lead_status','last_activity','source_channel'];
+const autoExtracted = requiredFields.filter(f => d[f] && d[f] !== '-' && d[f] !== '').length;
+// If AI had to ask (we can't track this precisely without extra signals,
+// so default to: if all 5 fields present = 5 auto, else flag as asked)
+// For now: treat missing fields as manually asked
+const manuallyAsked = requiredFields.length - autoExtracted;
+
+// Week number helper
+function getWeekNum(d) {
+  const date = new Date(d);
+  const start = new Date(date.getFullYear(), 0, 1);
+  return Math.ceil(((date - start) / 86400000 + start.getDay() + 1) / 7);
+}
+
+const today = new Date().toISOString().split('T')[0];
+const weekNum = `W${getWeekNum(today)}-${new Date().getFullYear()}`;
+
+// ── Build Notion page body ────────────────────────────────
+const body = {
+  parent: { database_id: ANALYTICS_DB_ID },
+  properties: {
+    'Salesperson Name':    { title: [{ type: 'text', text: { content: d.registered_employee || d.first_name || 'Unknown' } }] },
+    'Telegram Chat ID':    { rich_text: [{ type: 'text', text: { content: String(d.telegram_chat_id || '') } }] },
+    'Log Date':            { date: { start: today } },
+    'Input Type':          { select: { name: d.input_type || 'Text' } },
+    'Lead Name':           { rich_text: [{ type: 'text', text: { content: `${d.first_name || ''} ${d.last_name || ''}`.trim() } }] },
+    'Lead Status':         { select: { name: d.lead_status || 'Receiver' } },
+    'Last Activity':       { select: { name: d.last_activity || 'Call' } },
+    'Source Channel':      { select: { name: d.source_channel || 'Other' } },
+    'Interested Product':  { rich_text: [{ type: 'text', text: { content: d.interested_product || '' } }] },
+    'Fields Auto-Extracted': { number: autoExtracted },
+    'Fields Manually Asked': { number: manuallyAsked },
+    'Has Next Action':     { select: { name: d.next_action_label ? 'Yes' : 'No' } },
+    'Next Action Label':   { rich_text: [{ type: 'text', text: { content: d.next_action_label || '' } }] },
+    'Calendar Reminder Set': { select: { name: d.add_calendar_reminder ? 'Yes' : 'No' } },
+    'Action Type':         { select: { name: actionType } },
+    'Raw Message Preview': { rich_text: [{ type: 'text', text: { content: (d.raw_message || '').slice(0, 500) } }] },
+    'Week Number':         { rich_text: [{ type: 'text', text: { content: weekNum } }] },
+    'Notion Lead Page ID': { rich_text: [{ type: 'text', text: { content: d.notion_page_id || d.page_id || '' } }] },
+  }
+};
+
+// Add next_action_date if present
+if (d.next_action_date) {
+  body.properties['Next Action Date'] = {
+    date: { start: d.next_action_date, time_zone: 'Asia/Ulaanbaatar' }
+  };
+}
+
+// ── POST to Notion Analytics DB ───────────────────────────
+const response = await $http.request({
+  method: 'POST',
+  url: NOTION_API,
+  headers: {
+    'Authorization': `Bearer ${$credentials.notionApi.apiKey}`,
+    'Notion-Version': NOTION_VERSION,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify(body)
+});
+
+// Pass through original data unchanged so downstream nodes work normally
+return [{ json: { ...d, analytics_logged: true, analytics_page_id: response.id } }];
