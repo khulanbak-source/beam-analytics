@@ -43,7 +43,7 @@
   .config-input { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 9px 13px; font-size: 13px; width: 320px; max-width: 100%; }
   .config-input:focus { outline: none; border-color: var(--accent); }
   .config-btn { background: var(--accent); color: white; border: none; border-radius: 8px; padding: 9px 20px; font-size: 13px; font-weight: 600; cursor: pointer; }
-  .config-note { font-size: 11px; color: var(--muted); }
+  .  .config-note { font-size: 11px; color: var(--muted); }
 
   .filters { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
   .filter-select { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
@@ -146,7 +146,7 @@
       <input class="config-input" id="dbId" placeholder="Analytics DB ID: 4279dc10-e706-4209-b0d3-89122fbc5e5e" style="width:420px"/>
     </div>
     <button class="config-btn" onclick="saveConfig()">Connect & Load Data</button>
-    <p class="config-note" style="margin-top:10px">Token is stored locally in your browser only. Never shared.</p>
+    <p class="config-note" style="margin-top:10px">Token stored in your browser only. Requires a <strong>read-only</strong> Notion integration connected to the Analytics DB.</p>
   </div>
 
   <div id="filterBar" class="filters" style="display:none">
@@ -227,6 +227,9 @@ function normId(id) {
 }
 
 async function fetchAllPages() {
+  // Route through cors-anywhere proxy to bypass browser CORS restrictions
+  // on direct Notion API calls from GitHub Pages
+  const PROXY = 'https://corsproxy.io/?url=';
   let results = [], cursor = undefined;
   const headers = {
     'Authorization': `Bearer ${NOTION_TOKEN}`,
@@ -236,7 +239,8 @@ async function fetchAllPages() {
   do {
     const body = { page_size: 100 };
     if (cursor) body.start_cursor = cursor;
-    const r = await fetch(`https://api.notion.com/v1/databases/${normId(DB_ID)}/query`, {
+    const url = `${PROXY}${encodeURIComponent(`https://api.notion.com/v1/databases/${normId(DB_ID)}/query`)}`;
+    const r = await fetch(url, {
       method: 'POST', headers, body: JSON.stringify(body)
     });
     if (!r.ok) { const e = await r.text(); throw new Error(e); }
